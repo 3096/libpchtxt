@@ -32,14 +32,14 @@ namespace pchtxt {
  * The content patches
  */
 struct PatchContent {
-    uint32_t offset;            /*!< The offset to patch at */
-    std::vector<uint8_t> value; /*!< The value to be patched, in bytes */
+    uint32_t offset;            /*!< The offset to patch at. AMS cheats will have this be 0 */
+    std::vector<uint8_t> value; /*!< The value to be patched, in bytes, or plain text for AMS cheats */
 };
 
 /**
  * Type of the Patch
  */
-enum PatchType { BIN, HEAP };
+enum PatchType { BIN, HEAP, AMS };
 
 /**
  * One patch in the output
@@ -83,19 +83,19 @@ struct PatchTextOutput {
 /**
  * Compile a complete output from one Patch Text
  * @param input an istream from the pchtxt file
- * @param logSs [optional] a streamstream to capture parsing logs
+ * @param logOs [optional] an ostream to capture parsing logs
  * @return The PatchTextOutput struct containing all the parsed information from the Patch Text
  */
 inline auto parsePchtxt(std::istream& input) -> PatchTextOutput;
-auto parsePchtxt(std::istream& input, std::stringstream& logSs) -> PatchTextOutput;
+auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput;
 
 /**
  * Parse the meta data for the Patch Text
  * @param input an istream from the pchtxt file
- * @param logSs [optional] a streamstream to capture parsing logs
+ * @param logOs [optional] an ostream to capture parsing logs
  * @return The PatchTextMeta struct containing the meta information of the Patch Text
  */
 inline auto getPchtxtMeta(std::istream& input) -> PatchTextMeta;
-auto getPchtxtMeta(std::istream& input, std::stringstream& logSs) -> PatchTextMeta;
+auto getPchtxtMeta(std::istream& input, std::ostream& logOs) -> PatchTextMeta;
 
 }  // namespace pchtxt
