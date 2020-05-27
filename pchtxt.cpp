@@ -20,6 +20,7 @@
 
 #include "pchtxt.hpp"
 
+#include <iomanip>
 #include <set>
 
 namespace pchtxt {
@@ -118,6 +119,51 @@ inline auto stringIsHex(std::string& str) {
     return std::find_if(begin(str), end(str), [](char ch) { return not std::isxdigit(ch); }) == end(str);
 }
 
+inline void trimZeros(std::string& str) { str.erase(0, std::min(str.find_first_not_of('0'), str.size() - 1)); }
+
+inline void escapeString(std::string& str) {
+    auto escapingPos = begin(str);
+    auto targetPos = begin(str);
+
+    while (escapingPos != end(str)) {
+        if (*escapingPos == '\\' and escapingPos + 1 != end(str)) {
+            escapingPos++;
+
+            switch (*escapingPos) {
+                case 'a':
+                    *targetPos = '\a';
+                    break;
+                case 'b':
+                    *targetPos = '\b';
+                    break;
+                case 'f':
+                    *targetPos = '\f';
+                    break;
+                case 'n':
+                    *targetPos = '\n';
+                    break;
+                case 'r':
+                    *targetPos = '\r';
+                    break;
+                case 't':
+                    *targetPos = '\t';
+                    break;
+                case 'v':
+                    *targetPos = '\v';
+                    break;
+                default:
+                    *targetPos = *escapingPos;
+            }
+        } else {
+            *targetPos = *escapingPos;
+        }
+        escapingPos++;
+        targetPos++;
+    }
+
+    if (targetPos != end(str)) str.erase(targetPos, end(str));
+}
+
 // not utils
 
 auto parsePchtxt(std::istream& input) -> PatchTextOutput {
@@ -170,8 +216,7 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                     if (curPatchCollection.buildId.empty()) {
                         logOs << "L" << curLineNum << ": ERROR: missing build id, abort parsing" << curTag
                               << std::endl;
-                        stopParsing = true;
-                        break;
+                        return {};
                     }
 
                     if (not curPatch.contents.empty()) {
@@ -275,8 +320,7 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                 } else if (isStartsWith(lineNoCommentLower, NSOBID_TAG)) {  // legacy style nsobid
                     if (not lineNoCommentLower.size() > std::string_view(NSOBID_TAG).size() + 1) {
                         logOs << "L" << curLineNum << ": ERROR: legacy nsobid tag missing value" << std::endl;
-                        stopParsing = true;
-                        break;
+                        return {};
                     }
                     curPatchCollection.targetType = NSO;
                     curPatchCollection.buildId = lineNoComment.substr(std::string_view(NSOBID_TAG).size() + 1);
@@ -301,8 +345,7 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                 // store current
                 if (curPatchCollection.buildId.empty()) {
                     logOs << "L" << curLineNum << ": ERROR: missing build id, abort parsing" << std::endl;
-                    stopParsing = true;
-                    break;
+                    return {};
                 }
 
                 if (not curPatch.contents.empty()) {
@@ -335,16 +378,64 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
 
                 // parse patch contents
                 if (curPatch.type == AMS) {  // for AMS cheats, just add line as plain text
-                    curPatch.contents.push_back({0, std::vector<uint8_t>{begin(lineNoComment), end(lineNoComment)}});
+                    curPatch.contents.push_back({0, {begin(lineNoComment), end(lineNoComment)}});
+
+                    if (logDebugInfo) logOs << "L" << curLineNum << ": AMS cheat: " << lineNoComment << std::endl;
                     break;
                 }
 
                 // parse values
                 auto offsetStr = firstToken(lineNoCommentLower);
-                if (offsetStr.empty()) {
+                auto valueStr = lineNoCommentLower.substr(offsetStr.size());
+
+                // check offset
+                if (not stringIsHex(offsetStr)) {
                     if (logDebugInfo)
                         logOs << "L" << curLineNum << ": line ignored: invalid offset: " << line << std::endl;
                     break;
+                }
+                trimZeros(offsetStr);
+                if (offsetStr.size() > 8) {
+                    logOs << "L" << curLineNum << ": ERROR: offset: " << offsetStr << " out of range" << std::endl;
+                    return {};
+                }
+
+                auto patchContent = PatchContent{static_cast<uint32_t>(std::stoul(offsetStr, nullptr, 16)), {}};
+
+                // parse value
+                ltrim(valueStr);
+                if (valueStr[0] == '"') {  // string patch
+                    auto closingPosSearch = begin(valueStr);
+                    while (true) {  // find string closing pos
+                        closingPosSearch++;
+
+                        if ((closingPosSearch = std::find(closingPosSearch, end(valueStr), '"')) == end(valueStr)) {
+                            logOs << "L" << curLineNum << ": ERROR: cannot find string closing: " << valueStr
+                                  << std::endl;
+                            return {};
+                        }
+
+                        if (*(closingPosSearch - 1) != '\\') {
+                            break;
+                        }
+                    }
+
+                    // escape chars
+                    auto stringValueStr = std::string{begin(valueStr) + 1, closingPosSearch};
+                    escapeString(stringValueStr);
+
+                    patchContent.value = {begin(stringValueStr), end(stringValueStr)};
+                    patchContent.value.push_back('\0');
+
+                } else {
+                }
+
+                curPatch.contents.push_back(patchContent);
+                if (logDebugInfo) {
+                    logOs << "L" << curLineNum << ": offset: " << std::hex << std::setfill('0') << std::setw(8)
+                          << patchContent.offset << " value: " << std::setw(2);
+                    for (auto byte : patchContent.value) logOs << static_cast<int>(byte);
+                    logOs << std::endl << std::dec << std::setw(0);
                 }
             }
         }
