@@ -110,4 +110,12 @@ auto getPchtxtMeta(std::istream& input, std::ostream& logOs) -> PatchTextMeta;
 inline auto updatePchtxt(PatchTextOutput& patchTextOutput, std::iostream& pchtxtUpdateTarget) -> int;
 auto updatePchtxt(PatchTextOutput& patchTextOutput, std::iostream& pchtxtUpdateTarget, std::ostream& logOs) -> int;
 
+/**
+ * Some AMS cheats are just static value to NSO. These cheats can be effectively converted to bin type patches. This
+ * function attempts to do that
+ * @param patchToConvert the patch to attempt conversion on
+ * @return If the patch was converted
+ */
+auto updatePchtxt(Patch& patchToConvert) -> bool;
+
 }  // namespace pchtxt

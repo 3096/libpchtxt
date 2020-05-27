@@ -62,14 +62,8 @@ inline auto isStartsWith(std::string& checkedStr, std::string_view targetStr) {
     return checkedStr.size() >= targetStr.size() and checkedStr.substr(0, targetStr.size()) == targetStr;
 }
 
-inline auto readLine(std::istream& in) -> std::string {
-    auto line = std::string{};
-    std::getline(in, line, '\n');
-    return line;
-}
-
 inline void ltrim(std::string& str) {
-    str.erase(begin(str), std::find_if(begin(str), end(str), [](char ch) { return !std::isspace(ch); }));
+    str.erase(begin(str), std::find_if(begin(str), end(str), [](char ch) { return not std::isspace(ch); }));
 }
 
 inline void rtrim(std::string& str) {
@@ -105,14 +99,23 @@ inline auto getLineCommentContent(std::string& str) {
         return not(std::isspace(ch) or ch == COMMENT_IDENTIFIER[0]);
     });
     auto result = std::string(commentContentStart, end(str));
+    return result;
+}
+
+inline auto getLineNoComment(std::string& lineStr) {
+    auto result = lineStr.substr(0, commentPos(lineStr));
     rtrim(result);
     return result;
 }
 
-inline auto getLineNoComment(std::string& str) {
-    auto result = str.substr(0, commentPos(str));
-    trim(result);
+inline auto getStringToLowerCase(std::string& str) {
+    auto result = std::string(str);
+    std::transform(begin(result), end(result), begin(result), [](char ch) { return std::tolower(ch); });
     return result;
+}
+
+inline auto stringIsHex(std::string& str) {
+    return std::find_if(begin(str), end(str), [](char ch) { return not std::isxdigit(ch); }) == end(str);
 }
 
 // not utils
@@ -141,20 +144,21 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
     auto stopParsing = false;
     auto logDebugInfo = false;
 
+    auto line = std::string{};
     while (true) {
         if (stopParsing) break;
 
-        auto line = readLine(input);
-        if (line.empty()) {
+        if (not std::getline(input, line)) {
             logOs << "done parsing patches" << std::endl;
             break;
         }
-
+        trim(line);
         auto lineNoComment = getLineNoComment(line);
+        auto lineNoCommentLower = getStringToLowerCase(lineNoComment);
 
         switch (line[0]) {
             case '@': {  // tags
-                auto curTag = firstToken(lineNoComment);
+                auto curTag = firstToken(lineNoCommentLower);
 
                 if (curTag == STOP_PARSING_TAG) {  // stop parsing
                     logOs << "L" << curLineNum << ": done parsing patches (reached tag @stop)" << std::endl;
@@ -179,6 +183,8 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
 
                     if (curTag == ENABLED_TAG) {
                         curPatch.enabled = true;
+                    } else {
+                        curPatch.enabled = false;
                     }
 
                     if (curPatch.type != AMS) {  // don't use last comment on AMS style patch titles
@@ -197,7 +203,7 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                     }
 
                     // check patch type
-                    auto lineAfterTag = lineNoComment.substr(curTag.size());
+                    auto lineAfterTag = lineNoCommentLower.substr(curTag.size());
                     ltrim(lineAfterTag);
                     auto patchType = firstToken(lineAfterTag);
                     if (patchType == PATCH_TYPE_HEAP) {
@@ -216,7 +222,8 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                     auto flagType = firstToken(flagContent);
                     ltrim(flagType);
                     auto flagValue = flagContent.substr(flagType.size());
-                    trim(flagValue);
+                    ltrim(flagValue);
+                    flagType = getStringToLowerCase(flagType);
 
                     if (flagType == BIG_ENDIAN_FLAG) {
                         curIsBigEndian = true;
@@ -265,10 +272,15 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                               << std::endl;
                     }
 
-                } else if (isStartsWith(line, NSOBID_TAG)) {  // legacy style nsobid
+                } else if (isStartsWith(lineNoCommentLower, NSOBID_TAG)) {  // legacy style nsobid
+                    if (not lineNoCommentLower.size() > std::string_view(NSOBID_TAG).size() + 1) {
+                        logOs << "L" << curLineNum << ": ERROR: legacy nsobid tag missing value" << std::endl;
+                        stopParsing = true;
+                        break;
+                    }
                     curPatchCollection.targetType = NSO;
                     curPatchCollection.buildId = lineNoComment.substr(std::string_view(NSOBID_TAG).size() + 1);
-                    trim(curPatchCollection.buildId);
+                    ltrim(curPatchCollection.buildId);
 
                     if (logDebugInfo)
                         logOs << "L" << curLineNum << ": parsing started for " << curPatchCollection.buildId
@@ -317,7 +329,6 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                 if (not isAcceptingPatch) break;
 
                 // skip empty lines
-                trim(line);
                 if (line.empty()) {
                     break;
                 }
@@ -328,7 +339,13 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                     break;
                 }
 
-                // TODO: parse stuff
+                // parse values
+                auto offsetStr = firstToken(lineNoCommentLower);
+                if (offsetStr.empty()) {
+                    if (logDebugInfo)
+                        logOs << "L" << curLineNum << ": line ignored: invalid offset: " << line << std::endl;
+                    break;
+                }
             }
         }
 
@@ -362,24 +379,25 @@ auto getPchtxtMeta(std::istream& input, std::ostream& logOs) -> PatchTextMeta {
     auto legacyTitle = std::string{};
 
     auto curLineNum = 1;
+    auto line = std::string{};
     while (true) {
-        auto line = readLine(input);
-        if (line.empty()) {
+        if (not std::getline(input, line)) {
             logOs << "meta parsing reached end of file" << std::endl;
             break;
         }
+        trim(line);
 
         // meta should stop at an empty line
-        trim(line);
         if (line.empty()) {
             logOs << "L" << curLineNum << ": done parsing meta" << std::endl;
             break;
         }
 
         line = getLineNoComment(line);
+        auto lineLower = getStringToLowerCase(line);
 
         if (line[0] == '@') {
-            auto curTag = firstToken(line);
+            auto curTag = firstToken(lineLower);
             if (curTag == STOP_PARSING_TAG) {
                 logOs << "done parsing meta (reached tag @stop)" << std::endl;
                 break;
@@ -388,7 +406,7 @@ auto getPchtxtMeta(std::istream& input, std::ostream& logOs) -> PatchTextMeta {
             auto curTagFound = tagToValueMap.find(curTag);
             if (curTagFound != end(tagToValueMap)) {
                 auto curTagValue = line.substr(curTag.size());
-                trim(curTagValue);
+                ltrim(curTagValue);
                 // strip quatation marks if necessary
                 if (curTagValue[0] == '"' and curTagValue[curTagValue.size() - 1] == '"') {
                     curTagValue = curTagValue.substr(1, curTagValue.size() - 2);
@@ -397,7 +415,6 @@ auto getPchtxtMeta(std::istream& input, std::ostream& logOs) -> PatchTextMeta {
                 logOs << "L" << curLineNum << ": meta: " << curTag << "=" << curTagValue << std::endl;
             }
         } else if (line[0] == '#') {  // echo identifier
-            rtrim(line);
             logOs << "L" << curLineNum << ": " << line << std::endl;
             legacyTitle = line.substr(1);
             ltrim(legacyTitle);
