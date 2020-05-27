@@ -47,8 +47,9 @@ enum PatchType { BIN, HEAP, AMS };
 struct Patch {
     std::string name;                 /*!< Name of the patch */
     std::string author;               /*!< Author of the patch */
+    PatchType type;                   /*!< Type of the patch */
     bool enabled;                     /*!< The patch is currently enabled or not */
-    PatchType type;                   /*!< The patch is currently enabled or not */
+    int lineNum;                      /*!< Line number the patch was read from */
     std::list<PatchContent> contents; /*!< List of contents for the patch */
 };
 
@@ -97,5 +98,16 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput;
  */
 inline auto getPchtxtMeta(std::istream& input) -> PatchTextMeta;
 auto getPchtxtMeta(std::istream& input, std::ostream& logOs) -> PatchTextMeta;
+
+/**
+ * Using PatchTextOutput to update the pchtxt content inside an iostream. PatchTextOutput must be originally parsed
+ * from the same pchtxt
+ * @param patchTextOutput patchTextOutput to update pchtxt with
+ * @param pchtxtUpdateTarget an iostream with the content of the pchtxt to be updated
+ * @param logOs [optional] an ostream to capture logs
+ * @return How many patches were successfully updated
+ */
+inline auto updatePchtxt(PatchTextOutput& patchTextOutput, std::iostream& pchtxtUpdateTarget) -> int;
+auto updatePchtxt(PatchTextOutput& patchTextOutput, std::iostream& pchtxtUpdateTarget, std::ostream& logOs) -> int;
 
 }  // namespace pchtxt

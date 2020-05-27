@@ -41,9 +41,12 @@ const auto META_TAGS = std::set<std::string_view>{TITLE_TAG, PROGRAM_ID_TAG, URL
 // parsing tags
 constexpr auto ENABLED_TAG = "@enabled";
 constexpr auto DISABLED_TAG = "@disabled";
-constexpr auto HEAP_TAG = "@heap";
 constexpr auto STOP_PARSING_TAG = "@stop";
 constexpr auto FLAG_TAG = "@flag";
+// patch type strings
+constexpr auto PATCH_TYPE_BIN = "bin";
+constexpr auto PATCH_TYPE_HEAP = "heap";
+constexpr auto PATCH_TYPE_AMS = "ams";
 // flags
 constexpr auto BIG_ENDIAN_FLAG = "be";
 constexpr auto LITTLE_ENDIAN_FLAG = "le";
@@ -52,6 +55,8 @@ constexpr auto NROBID_FLAG = "nrobid";
 constexpr auto OFFSET_SHIFT_FLAG = "offset_shift";
 constexpr auto DEBUG_INFO_FLAG = "debug_info";
 constexpr auto ALT_DEBUG_INFO_FLAG = "print_values";  // legacy
+
+// utils
 
 inline auto isStartsWith(std::string& checkedStr, std::string_view targetStr) {
     return checkedStr.size() >= targetStr.size() and checkedStr.substr(0, targetStr.size()) == targetStr;
@@ -84,7 +89,7 @@ inline auto commentPos(std::string& str) {
     auto pos = 0;
     auto isInString = false;
     for (auto ch : str) {
-        if (not isInString and ch == COMMENT_IDENTIFIER[0]) {
+        if (ch == COMMENT_IDENTIFIER[0] and not isInString) {
             break;
         }
         if (ch == '"') {
@@ -130,12 +135,9 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
     auto lastCommentLine = std::string{};
     auto curPatch = Patch{};
     auto curPatchCollection = PatchCollection{};
-    // auto curBuildId = std::string{};
-    // auto curTargetType = TargetType{};
     auto curOffsetShift = 0;
     auto curIsBigEndian = false;
     auto isAcceptingPatch = false;
-    auto isAcceptingAmsCheat = false;
     auto stopParsing = false;
     auto logDebugInfo = false;
 
@@ -152,17 +154,6 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
 
         switch (line[0]) {
             case '@': {  // tags
-                if (isAcceptingAmsCheat) {
-                    logOs << "L" << curLineNum << ": WARNING: AMS cheat [" << curPatch.name
-                          << "] ended because parsing reached a tag" << std::endl;
-                    if (not curPatch.contents.empty()) {
-                        curPatchCollection.patches.push_back(curPatch);
-                        logOs << "L" << curLineNum << ": AMS cheat read: " << curPatch.name << std::endl;
-                    }
-                    curPatch = Patch{};
-                    isAcceptingAmsCheat = false;
-                }
-
                 auto curTag = firstToken(lineNoComment);
 
                 if (curTag == STOP_PARSING_TAG) {  // stop parsing
@@ -171,6 +162,7 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                     break;
 
                 } else if (curTag == ENABLED_TAG or curTag == DISABLED_TAG) {  // start of a new patch
+                    // store current
                     if (curPatchCollection.buildId.empty()) {
                         logOs << "L" << curLineNum << ": ERROR: missing build id, abort parsing" << curTag
                               << std::endl;
@@ -181,32 +173,45 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                     if (not curPatch.contents.empty()) {
                         curPatchCollection.patches.push_back(curPatch);
                         logOs << "L" << curLineNum << ": patch read: " << curPatch.name << std::endl;
+                        // start new patch
+                        curPatch = Patch{};
                     }
-                    curPatch = Patch{};
 
                     if (curTag == ENABLED_TAG) {
                         curPatch.enabled = true;
                     }
 
-                    // extract name and author
-                    auto authorStartPos = lastCommentLine.find(AUTHOR_IDENTIFIER_OPEN);
-                    auto authorEndPos = lastCommentLine.rfind(AUTHOR_IDENTIFIER_CLOSE);
-                    auto patchName = lastCommentLine.substr(0, authorStartPos);
-                    rtrim(patchName);
-                    auto author = lastCommentLine.substr(authorStartPos + 1, authorEndPos - authorStartPos - 1);
-                    trim(author);
-                    curPatch.name = patchName;
-                    curPatch.author = author;
+                    if (curPatch.type != AMS) {  // don't use last comment on AMS style patch titles
+                        // extract name and author from last comment
+                        auto authorStartPos = lastCommentLine.find(AUTHOR_IDENTIFIER_OPEN);
+                        auto authorEndPos = lastCommentLine.rfind(AUTHOR_IDENTIFIER_CLOSE);
+                        auto patchName = lastCommentLine.substr(0, authorStartPos);
+                        rtrim(patchName);
+                        auto author =
+                            authorStartPos != std::string::npos
+                                ? lastCommentLine.substr(authorStartPos + 1, authorEndPos - authorStartPos - 1)
+                                : std::string{};
+                        trim(author);
+                        curPatch.name = patchName;
+                        curPatch.author = author;
+                    }
+
+                    // check patch type
+                    auto lineAfterTag = lineNoComment.substr(curTag.size());
+                    ltrim(lineAfterTag);
+                    auto patchType = firstToken(lineAfterTag);
+                    if (patchType == PATCH_TYPE_HEAP) {
+                        curPatch.type = HEAP;
+                    } else if (patchType == PATCH_TYPE_AMS) {
+                        curPatch.type = AMS;
+                    }
 
                     isAcceptingPatch = true;
 
                     if (logDebugInfo) logOs << "L" << curLineNum << ": parsing patch: " << curPatch.name << std::endl;
 
-                } else if (curTag == HEAP_TAG) {  // cur patch is heap patch
-                    curPatch.type = HEAP;
-
                 } else if (curTag == FLAG_TAG) {  // parse flag
-                    auto flagContent = lineNoComment.substr(curTag.size() + 1);
+                    auto flagContent = lineNoComment.substr(curTag.size());
                     ltrim(flagContent);
                     auto flagType = firstToken(flagContent);
                     ltrim(flagType);
@@ -220,17 +225,21 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                         curIsBigEndian = false;
 
                     } else if (flagType == NSOBID_FLAG or flagType == NROBID_FLAG) {
+                        // wrap up last bid collection
                         if (not curPatch.contents.empty()) {
                             curPatchCollection.patches.push_back(curPatch);
                             logOs << "L" << curLineNum << ": patch read: " << curPatch.name << std::endl;
                         }
+                        curPatch = Patch{};
                         if (not curPatchCollection.patches.empty()) {
                             result.collections.push_back(curPatchCollection);
                             if (logDebugInfo)
                                 logOs << "L" << curLineNum << ": parsing completed for " << curPatchCollection.buildId
                                       << std::endl;
+                            curPatchCollection = PatchCollection{};
                         }
 
+                        // set up patch collection for new bid
                         curPatchCollection.buildId = flagValue;
                         if (flagType == NROBID_FLAG) {
                             curPatchCollection.targetType = NRO;
@@ -238,14 +247,14 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                             curPatchCollection.targetType = NSO;
                         }
 
-                        isAcceptingPatch = false;
+                        isAcceptingPatch = false;  // don't accept anymore patches since we just started new bid
 
                         if (logDebugInfo)
                             logOs << "L" << curLineNum << ": parsing started for " << curPatchCollection.buildId
                                   << std::endl;
 
                     } else if (flagType == OFFSET_SHIFT_FLAG) {
-                        // TODO:
+                        curOffsetShift = std::stoi(flagValue);
 
                     } else if (flagType == DEBUG_INFO_FLAG or flagType == ALT_DEBUG_INFO_FLAG) {
                         logDebugInfo = true;
@@ -265,7 +274,7 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                         logOs << "L" << curLineNum << ": parsing started for " << curPatchCollection.buildId
                               << " (legacy style bid)" << std::endl;
 
-                } else if (META_TAGS.find(curTag) == end(META_TAGS)) {
+                } else if (META_TAGS.find(curTag) == end(META_TAGS)) {  // check if tag is bad
                     logOs << "L" << curLineNum << ": WARNING ignored unrecognized tag: " << curTag << std::endl;
                 }
                 break;
@@ -277,19 +286,25 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
             }
 
             case AMS_CHEAT_IDENTIFIER_OPEN[0]: {  // AMS cheat
+                // store current
+                if (curPatchCollection.buildId.empty()) {
+                    logOs << "L" << curLineNum << ": ERROR: missing build id, abort parsing" << std::endl;
+                    stopParsing = true;
+                    break;
+                }
+
                 if (not curPatch.contents.empty()) {
                     curPatchCollection.patches.push_back(curPatch);
                     logOs << "L" << curLineNum << ": patch read: " << curPatch.name << std::endl;
                 }
 
-                curPatch = Patch{};
-                auto amsCheatName = lineNoComment.substr(1, lineNoComment.rfind(AMS_CHEAT_IDENTIFIER_CLOSE) - 2);
+                // start new patch
+                auto amsCheatName = lineNoComment.substr(1, lineNoComment.rfind(AMS_CHEAT_IDENTIFIER_CLOSE) - 1);
                 trim(amsCheatName);
-                curPatch.name = amsCheatName;
-                curPatch.author = std::string{};
+                curPatch = Patch{amsCheatName, {}, AMS, true, curLineNum, {}};
 
-                isAcceptingPatch = false;
-                isAcceptingAmsCheat = true;
+                if (logDebugInfo) logOs << "L" << curLineNum << ": parsing AMS cheat: " << curPatch.name << std::endl;
+
                 break;
             }
 
@@ -299,24 +314,21 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
             }
 
             default: {
-                if (isAcceptingPatch) {
-                    // TODO: parse patch contents
-                } else if (isAcceptingAmsCheat) {
-                    trim(line);
-                    if (line.empty()) {
-                        if (not curPatch.contents.empty()) {
-                            curPatchCollection.patches.push_back(curPatch);
-                            logOs << "L" << curLineNum << ": AMS cheat read: " << curPatch.name << std::endl;
-                        }
-                        curPatch = Patch{};
-                        isAcceptingAmsCheat = false;
+                if (not isAcceptingPatch) break;
 
-                    } else {
-                        curPatch.contents.push_back(
-                            {0, std::vector<uint8_t>{begin(lineNoComment), end(lineNoComment)}});
-                    }
+                // skip empty lines
+                trim(line);
+                if (line.empty()) {
+                    break;
                 }
-                break;
+
+                // parse patch contents
+                if (curPatch.type == AMS) {  // for AMS cheats, just add line as plain text
+                    curPatch.contents.push_back({0, std::vector<uint8_t>{begin(lineNoComment), end(lineNoComment)}});
+                    break;
+                }
+
+                // TODO: parse stuff
             }
         }
 
