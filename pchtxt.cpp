@@ -246,7 +246,7 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
 
                     if (curPatch.type != AMS) {  // don't use last comment on AMS style patch titles
                         // extract name and author from last comment
-                        auto authorStartPos = lastCommentLine.find(AUTHOR_IDENTIFIER_OPEN);
+                        auto authorStartPos = lastCommentLine.rfind(AUTHOR_IDENTIFIER_OPEN);
                         auto authorEndPos = lastCommentLine.rfind(AUTHOR_IDENTIFIER_CLOSE);
                         auto patchName = lastCommentLine.substr(0, authorStartPos);
                         rtrim(patchName);
@@ -298,17 +298,27 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                         if (not curPatchCollection.patches.empty()) {
                             result.collections.push_back(curPatchCollection);
                             if (logDebugInfo)
-                                logOs << "L" << curLineNum << ": parsing completed for " << curPatchCollection.buildId
+                                logOs << "L" << curLineNum << ": parsing stopped for " << curPatchCollection.buildId
                                       << std::endl;
                             curPatchCollection = PatchCollection{};
                         }
 
-                        // set up patch collection for new bid
-                        curPatchCollection.buildId = flagValue;
-                        if (flagType == NROBID_FLAG) {
-                            curPatchCollection.targetType = NRO;
+                        // check if new bid exist
+                        auto existingCollection = std::find_if(
+                            begin(result.collections), end(result.collections),
+                            [flagValue](PatchCollection& collection) { return collection.buildId == flagValue; });
+
+                        if (existingCollection != end(result.collections)) {  // bid already exist
+                            curPatchCollection = *existingCollection;
+                            result.collections.erase(existingCollection);
                         } else {
-                            curPatchCollection.targetType = NSO;
+                            // set up patch collection for new bid
+                            curPatchCollection.buildId = flagValue;
+                            if (flagType == NROBID_FLAG) {
+                                curPatchCollection.targetType = NRO;
+                            } else {
+                                curPatchCollection.targetType = NSO;
+                            }
                         }
 
                         isAcceptingPatch = false;  // don't accept anymore patches since we just started new bid
@@ -412,7 +422,8 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                     return {};
                 }
 
-                auto patchContent = PatchContent{static_cast<uint32_t>(std::stoul(offsetStr, nullptr, 16)), {}};
+                auto offset = static_cast<uint32_t>(std::stoul(offsetStr, nullptr, 16)) + curOffsetShift;
+                auto patchContent = PatchContent{offset, {}};
 
                 // parse value
                 ltrim(valueStr);
