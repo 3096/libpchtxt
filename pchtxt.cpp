@@ -164,6 +164,16 @@ inline void escapeString(std::string& str) {
     if (targetPos != end(str)) str.erase(targetPos, end(str));
 }
 
+inline auto getHexCharNibble(char ch) -> uint8_t {
+    if (ch >= 'A' and ch <= 'F') return ch - 'A' + 10;
+    if (ch >= 'a' and ch <= 'f') return ch - 'a' + 10;
+    return ch - '0';  // this is okay because we already check the string is hex
+}
+
+inline auto getHexByte(std::string::iterator& strIter) -> uint8_t {
+    return (getHexCharNibble(*strIter) << 4) + getHexCharNibble(*(strIter + 1));
+}
+
 // not utils
 
 auto parsePchtxt(std::istream& input) -> PatchTextOutput {
@@ -231,6 +241,8 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                     } else {
                         curPatch.enabled = false;
                     }
+
+                    curPatch.lineNum = curLineNum;
 
                     if (curPatch.type != AMS) {  // don't use last comment on AMS style patch titles
                         // extract name and author from last comment
@@ -427,15 +439,50 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                     patchContent.value = {begin(stringValueStr), end(stringValueStr)};
                     patchContent.value.push_back('\0');
 
-                } else {
+                } else {            // hex values patch
+                    while (true) {  // parse value token by token
+                        // get next token
+                        auto valueTokenStr = firstToken(valueStr);
+                        valueStr = valueStr.substr(valueTokenStr.size());
+                        ltrim(valueStr);
+                        if (valueTokenStr.empty()) {
+                            break;
+                        }
+
+                        // check token
+                        if (valueTokenStr.size() % 2 != 0) {
+                            logOs << "L" << curLineNum << ": ERROR: bad length for hex values: " << valueTokenStr
+                                  << std::endl;
+                            return {};
+                        }
+                        if (not stringIsHex(valueTokenStr)) {
+                            logOs << "L" << curLineNum << ": ERROR: not valid hex values: " << valueTokenStr
+                                  << std::endl;
+                            return {};
+                        }
+
+                        // parse token value
+                        if (curIsBigEndian) {
+                            auto curBytePos = end(valueTokenStr);
+                            while (curBytePos != begin(valueTokenStr)) {
+                                curBytePos -= 2;
+                                patchContent.value.push_back(getHexByte(curBytePos));
+                            }
+                        } else {
+                            for (auto curBytePos = begin(valueTokenStr); curBytePos != end(valueTokenStr);
+                                 curBytePos += 2) {
+                                patchContent.value.push_back(getHexByte(curBytePos));
+                            }
+                        }
+                    }
                 }
 
                 curPatch.contents.push_back(patchContent);
                 if (logDebugInfo) {
                     logOs << "L" << curLineNum << ": offset: " << std::hex << std::setfill('0') << std::setw(8)
-                          << patchContent.offset << " value: " << std::setw(2);
-                    for (auto byte : patchContent.value) logOs << static_cast<int>(byte);
-                    logOs << std::endl << std::dec << std::setw(0);
+                          << patchContent.offset << " value: ";
+                    for (auto byte : patchContent.value) logOs << std::setw(2) << static_cast<int>(byte);
+                    logOs << std::dec << " len: " << patchContent.value.size() << std::endl;
                 }
             }
         }
