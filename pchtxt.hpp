@@ -20,9 +20,8 @@
 
 #pragma once
 
-#include <functional>
+#include <iostream>
 #include <list>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -96,7 +95,7 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput;
  * @param logOs [optional] an ostream to capture parsing logs
  * @return The PatchTextMeta struct containing the meta information of the Patch Text
  */
-inline auto getPchtxtMeta(std::istream& input) -> PatchTextMeta;
+auto getPchtxtMeta(std::istream& input) -> PatchTextMeta;
 auto getPchtxtMeta(std::istream& input, std::ostream& logOs) -> PatchTextMeta;
 
 /**
@@ -107,7 +106,7 @@ auto getPchtxtMeta(std::istream& input, std::ostream& logOs) -> PatchTextMeta;
  * @param logOs [optional] an ostream to capture logs
  * @return How many patches were successfully updated
  */
-inline auto updatePchtxt(PatchTextOutput& patchTextOutput, std::iostream& pchtxtUpdateTarget) -> int;
+auto updatePchtxt(PatchTextOutput& patchTextOutput, std::iostream& pchtxtUpdateTarget) -> int;
 auto updatePchtxt(PatchTextOutput& patchTextOutput, std::iostream& pchtxtUpdateTarget, std::ostream& logOs) -> int;
 
 /**
@@ -116,6 +115,13 @@ auto updatePchtxt(PatchTextOutput& patchTextOutput, std::iostream& pchtxtUpdateT
  * @param patchToConvert the patch to attempt conversion on
  * @return If the patch was converted
  */
-auto updatePchtxt(Patch& patchToConvert) -> bool;
+auto convertPatchToAms(Patch& patchToConvert) -> bool;
+
+/**
+ * Write an IPS file with BIN patches to an ostream
+ * @param patchCollection the PatchCollection for one binary file
+ * @param ostream the ostream to write the IPS file to
+ */
+void writeIps(PatchCollection& patchCollection, std::ostream& ostream);
 
 }  // namespace pchtxt

@@ -20,8 +20,11 @@
 
 #include "pchtxt.hpp"
 
+#include <algorithm>
+#include <cstring>
 #include <iomanip>
 #include <set>
+#include <unordered_map>
 
 namespace pchtxt {
 
@@ -56,6 +59,10 @@ constexpr auto NROBID_FLAG = "nrobid";
 constexpr auto OFFSET_SHIFT_FLAG = "offset_shift";
 constexpr auto DEBUG_INFO_FLAG = "debug_info";
 constexpr auto ALT_DEBUG_INFO_FLAG = "print_values";  // legacy
+
+// IPS
+constexpr auto IPS32_HEADER_MAGIC = "IPS32";
+constexpr auto IPS32_FOOTER_MAGIC = "EEOF";
 
 // utils
 
@@ -224,8 +231,7 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                 } else if (curTag == ENABLED_TAG or curTag == DISABLED_TAG) {  // start of a new patch
                     // store current
                     if (curPatchCollection.buildId.empty()) {
-                        logOs << "L" << curLineNum << ": ERROR: missing build id, abort parsing" << curTag
-                              << std::endl;
+                        logOs << "L" << curLineNum << ": ERROR: missing build id, abort parsing" << std::endl;
                         return {};
                     }
 
@@ -328,7 +334,9 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                                   << std::endl;
 
                     } else if (flagType == OFFSET_SHIFT_FLAG) {
-                        curOffsetShift = std::stoi(flagValue);
+                        curOffsetShift = std::stoi(flagValue, nullptr, 0);
+                        if (logDebugInfo)
+                            logOs << "L" << curLineNum << ": offset shift is now " << curOffsetShift << std::endl;
 
                     } else if (flagType == DEBUG_INFO_FLAG or flagType == ALT_DEBUG_INFO_FLAG) {
                         logDebugInfo = true;
@@ -340,7 +348,7 @@ auto parsePchtxt(std::istream& input, std::ostream& logOs) -> PatchTextOutput {
                     }
 
                 } else if (isStartsWith(lineNoCommentLower, NSOBID_TAG)) {  // legacy style nsobid
-                    if (not lineNoCommentLower.size() > std::string_view(NSOBID_TAG).size() + 1) {
+                    if (not(lineNoCommentLower.size() > std::string_view(NSOBID_TAG).size() + 1)) {
                         logOs << "L" << curLineNum << ": ERROR: legacy nsobid tag missing value" << std::endl;
                         return {};
                     }
@@ -578,6 +586,25 @@ auto getPchtxtMeta(std::istream& input, std::ostream& logOs) -> PatchTextMeta {
     }
 
     return result;
+}
+
+void writeIps(PatchCollection& patchCollection, std::ostream& ostream) {
+    ostream.write(IPS32_HEADER_MAGIC, std::strlen(IPS32_HEADER_MAGIC));
+    for (auto& patch : patchCollection.patches) {
+        if (patch.type != BIN or patch.enabled == false) continue;
+        for (auto& patchContent : patch.contents) {
+            for (auto rightShift : {3, 2, 1, 0}) {
+                auto byteToWrite = static_cast<char>((patchContent.offset >> rightShift * 8) & 0xFF);
+                ostream.write(&byteToWrite, 1);
+            }
+            for (auto rightShift : {1, 0}) {
+                auto byteToWrite = static_cast<char>((patchContent.value.size() >> rightShift * 8) & 0xFF);
+                ostream.write(&byteToWrite, 1);
+            }
+            ostream.write(reinterpret_cast<char*>(patchContent.value.data()), patchContent.value.size());
+        }
+    }
+    ostream.write(IPS32_FOOTER_MAGIC, std::strlen(IPS32_FOOTER_MAGIC));
 }
 
 }  // namespace pchtxt
